@@ -9,6 +9,9 @@ Built for the situations where the infrastructure is gone: cyclones and floods, 
 a Kumbh Mela crowd where 40,000 devices overload the cell sites, a basement with no line of
 sight to a responder.
 
+**[Read docs/PROJECT.md](docs/PROJECT.md) for the full brief** — what is built, what has been
+measured, what has not, and why the existing options do not cover this.
+
 ## Architecture
 
 ```
