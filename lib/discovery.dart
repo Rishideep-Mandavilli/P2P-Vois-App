@@ -27,6 +27,14 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
   bool _connecting = false;
   String _version = '';
 
+  /// One call at a time — an incoming RFCOMM pairing while a call is up would
+  /// otherwise stack a second CallPage on the same microphone.
+  bool _callOpen = false;
+
+  /// Kept so a dropped call has a one-tap way back to the same peer instead of
+  /// forcing a fresh scan.
+  NativeDevice? _lastDevice;
+
   // Buffers the first incoming connection while waiting for the 2nd (dual tunnel).
   // Keyed by remote address to handle multiple simultaneous callers.
   final Map<String, int> _pendingIncomingRx = {};
@@ -109,7 +117,11 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
       _devices.clear();
     });
     await widget.server.startDiscovery();
-    await Future.delayed(const Duration(seconds: 12));
+    // The battery policy owns the window: a phone under 20% spends far less
+    // time with the radio scanning, which is the drain this app is most
+    // exposed to.
+    final window = BatterySaver.instance.discoveryInterval;
+    await Future.delayed(window);
     await widget.server.cancelDiscovery();
     await _loadBonded();
     if (!mounted) return;
@@ -139,6 +151,7 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
       final targets = _devices
           .where((d) => d.address != device.address)
           .toList();
+      _lastDevice = device;
       await _openCallDual(
         dual.rxId,
         dual.txId,
@@ -165,6 +178,12 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
     List<NativeDevice> relayTargets = const [],
     required bool isInitiator,
   }) async {
+    if (_callOpen) {
+      await widget.server.close(rxId);
+      await widget.server.close(txId);
+      return;
+    }
+    _callOpen = true;
     final txCh = RadioChannel(widget.server, txId);
     final rxCh = RadioChannel(widget.server, rxId);
     final session = RadioSession(widget.audio, widget.server);
@@ -179,6 +198,7 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
         ),
       ),
     );
+    _callOpen = false;
     await widget.server.startListening();
   }
 
@@ -243,6 +263,15 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
             icon: const Icon(Icons.visibility, size: 18),
             label: const Text('Make me visible to nearby phones'),
           ),
+          if (_lastDevice != null && !_scanning)
+            TextButton.icon(
+              onPressed: _connecting ? null : () => _connect(_lastDevice!),
+              icon: const Icon(Icons.history, size: 18),
+              label: Text('Reconnect to ${switch (_lastDevice!.name) {
+                '' => _lastDevice!.address,
+                final n => n,
+              }}'),
+            ),
           const Text('Tap a phone to connect (both must have this app)'),
           const SizedBox(height: 4),
           Expanded(

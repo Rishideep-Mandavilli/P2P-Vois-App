@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import 'alerts/sos.dart';
+import 'field_test_page.dart';
 import 'radio_server.dart';
 import 'session.dart';
 
@@ -176,6 +177,16 @@ class _CallPageState extends State<CallPage> {
         elevation: 0,
         automaticallyImplyLeading: false,
         actions: [
+          IconButton(
+            icon: const Icon(Icons.speed, color: Colors.white70),
+            tooltip: 'Field test measurements',
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => FieldTestPage(session: widget.session),
+              ),
+            ),
+          ),
           IconButton(
             icon: const Icon(Icons.warning_amber, color: Colors.redAccent),
             tooltip: 'Send SOS',

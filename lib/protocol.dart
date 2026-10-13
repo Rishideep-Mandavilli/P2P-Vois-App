@@ -16,6 +16,13 @@ class FrameType {
   /// AES-encrypted JSON: {code, lat, lng, sentAt} — a tiny coded distress
   /// payload, max-volume/non-interruptible on receipt.
   static const int sos = 0x06;
+
+  /// Round-trip probe used by the field-test harness. Payload is the
+  /// sender's 8-byte little-endian epoch microseconds; the peer echoes it
+  /// back untouched as [pong], so the sender can subtract without the two
+  /// devices needing synchronised clocks beyond their own wall clock.
+  static const int ping = 0x07;
+  static const int pong = 0x08;
 }
 
 /// Every frame = [1 type byte][2-byte little-endian length][payload].
@@ -84,3 +91,18 @@ List<String>? parseChainInfo(Uint8List payload) {
 Uint8List packKeyExchange(Uint8List key32) => wrapFrame(FrameType.keyExchange, key32);
 
 Uint8List packSos(Uint8List encryptedJson) => wrapFrame(FrameType.sos, encryptedJson);
+
+/// Round-trip probe. The 8-byte payload is the sender's epoch microseconds;
+/// the receiver answers with [packPong] carrying the same bytes.
+Uint8List packPing(int sentAtMicros) {
+  final payload = ByteData(8)..setUint64(0, sentAtMicros, Endian.little);
+  return wrapFrame(FrameType.ping, payload.buffer.asUint8List());
+}
+
+Uint8List packPong(Uint8List echoedPayload) => wrapFrame(FrameType.pong, echoedPayload);
+
+/// The epoch microseconds carried by a ping/pong payload, or null if the
+/// frame is too short to be one.
+int? probeMicros(Uint8List payload) => payload.length < 8
+    ? null
+    : ByteData.sublistView(payload).getUint64(0, Endian.little);

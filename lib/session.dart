@@ -7,6 +7,7 @@ import 'alerts/sos.dart';
 import 'audio.dart';
 import 'codec.dart';
 import 'crypto/payload_cipher.dart';
+import 'field_metrics.dart';
 import 'protocol.dart';
 import 'radio_server.dart';
 
@@ -66,11 +67,18 @@ class RadioSession {
 
   PayloadCipher? _cipher;
 
+  /// Which radio this call rides on; recorded so exported numbers are
+  /// attributable without asking the tester to remember.
+  final String transport;
+
+  /// Live counters for the field-test harness.
+  final FieldMetrics metrics = FieldMetrics();
+
   /// Non-null while an incoming SOS alert is showing — the UI treats this as
   /// non-interruptible until it clears back to null.
   final ValueNotifier<IncomingSos?> incomingAlert = ValueNotifier(null);
 
-  RadioSession(this.audio, this.server);
+  RadioSession(this.audio, this.server, {this.transport = 'Bluetooth RFCOMM'});
 
   Future<void> start(ByteChannel txChannel, ByteChannel rxChannel,
       {required bool isInitiator}) async {
@@ -113,6 +121,7 @@ class RadioSession {
     final payload = framePayload(frame);
     switch (type) {
       case FrameType.audio:
+        metrics.recordRx(frame);
         if (_downstream != null) {
           _downstream?.add(frame);
         } else if (payload.length == kFrameBytes) {
@@ -136,7 +145,27 @@ class RadioSession {
       case FrameType.sos:
         _handleIncomingSos(payload);
         break;
+      case FrameType.ping:
+        // Answer with the sender's own timestamp so it can measure the round
+        // trip on its clock; nothing is timed locally here.
+        _txChannel?.add(packPong(payload));
+        break;
+      case FrameType.pong:
+        final echoed = probeMicros(payload);
+        if (echoed != null) {
+          metrics.recordPong(echoed, DateTime.now().microsecondsSinceEpoch);
+        }
+        break;
     }
+  }
+
+  /// One round-trip probe. Call this on a timer from the field-test screen;
+  /// the answer arrives through [FrameType.pong].
+  void sendPing() {
+    final channel = _txChannel;
+    if (channel == null) return;
+    metrics.recordPingSent();
+    channel.add(packPing(DateTime.now().microsecondsSinceEpoch));
   }
 
   /// Sends a preset distress code — a tiny payload that survives a badly
@@ -193,6 +222,7 @@ class RadioSession {
       final payload = framePayload(frame);
       switch (type) {
         case FrameType.audio:
+          metrics.recordTx(frame);
           _txChannel?.add(frame);
           break;
         case FrameType.chainInfo:
@@ -257,7 +287,9 @@ class RadioSession {
 
   void _send(Uint8List pcm) {
     final encoded = _encoder.encode(pcmToSamples(pcm));
-    _txChannel?.add(packAudio(encoded));
+    final frame = packAudio(encoded);
+    metrics.recordTx(frame);
+    _txChannel?.add(frame);
   }
 
   void _onPeerGone() {
@@ -269,6 +301,15 @@ class RadioSession {
   Future<void> dispose() async {
     if (_disposed) return;
     _disposed = true;
+    // Say goodbye explicitly. Without this the peer only learns the call ended
+    // when the socket close surfaces, which can lag by seconds. The channel may
+    // already be dead when dispose runs (that is one of the reasons we get
+    // here), so the notification is best-effort.
+    try {
+      _txChannel?.add(packDisconnect());
+    } catch (e) {
+      debugPrint('RadioSession: disconnect notify failed: $e');
+    }
     await _setMic(false, onPcm: _send);
     await server.setLoudspeaker();
     await _rxSub?.cancel();

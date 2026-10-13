@@ -58,3 +58,7 @@ app.*.map.json
 .widget_preview/
 *.pdf
 dist/
+
+# iCloud Desktop & Documents conflict copies. These are stale duplicates, not build inputs.
+# See the sherpa-pinned "pubspec 2.lock" this repo produced after the speech layer was removed.
+* 2.lock

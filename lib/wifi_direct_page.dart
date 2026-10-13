@@ -9,6 +9,7 @@ import 'audio.dart';
 import 'call_page.dart';
 import 'crypto/payload_cipher.dart';
 import 'protocol.dart';
+import 'power/battery_saver.dart';
 import 'radio_server.dart';
 import 'session.dart';
 import 'wifi_direct_server.dart';
@@ -37,6 +38,11 @@ class _WifiDirectPageState extends State<WifiDirectPage> {
   StreamSubscription? _acceptedSub;
   bool _scanning = false;
   bool _connecting = false;
+
+  /// One call at a time: the group owner's TCP server keeps accepting after a
+  /// connection closes, so without this a second peer stacking in would open a
+  /// second CallPage over the same microphone.
+  bool _callOpen = false;
   String? _status;
 
   @override
@@ -69,7 +75,10 @@ class _WifiDirectPageState extends State<WifiDirectPage> {
   Future<void> _scan() async {
     setState(() => _scanning = true);
     await _wifi.discoverPeers();
-    Future.delayed(const Duration(seconds: 12), () {
+    // Cadence comes from the battery policy so a phone at 15% stops
+    // hammering the radio on every re-scan.
+    final window = BatterySaver.instance.discoveryInterval;
+    Future.delayed(window, () {
       if (mounted) setState(() => _scanning = false);
     });
   }
@@ -105,7 +114,13 @@ class _WifiDirectPageState extends State<WifiDirectPage> {
     String name, {
     required bool isInitiator,
   }) async {
-    final session = RadioSession(widget.audio, widget.btServer);
+    if (_callOpen) {
+      await channel.close();
+      return;
+    }
+    _callOpen = true;
+    final session = RadioSession(widget.audio, widget.btServer,
+        transport: 'WiFi Direct');
     await session.start(channel, channel, isInitiator: isInitiator);
     if (!mounted) return;
     await Navigator.of(context).push(
@@ -113,6 +128,7 @@ class _WifiDirectPageState extends State<WifiDirectPage> {
         builder: (_) => CallPage(deviceName: name, session: session),
       ),
     );
+    _callOpen = false;
   }
 
   Future<void> _broadcastMode() async {

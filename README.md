@@ -63,6 +63,8 @@ intermediate phone costs almost no CPU.
 | disconnect | `0x04` | empty |
 | keyExchange | `0x05` | raw 32-byte AES key |
 | sos | `0x06` | AES-encrypted JSON `{code, lat, lng, sentAt}` |
+| ping | `0x07` | sender's 8-byte epoch microseconds |
+| pong | `0x08` | the same bytes, echoed untouched |
 
 ## Feature set
 
@@ -74,7 +76,10 @@ intermediate phone costs almost no CPU.
 - **Broadcast SOS** — become the WiFi Direct group owner and reach every connected peer at once.
 - **Store-and-forward** — an SOS sent while nobody is in range is queued and handed off when a
   peer connects.
-- **Battery duty cycling** — below 20 % the discovery re-scan interval widens from 15 s to 45 s.
+- **Battery duty cycling** — below 20 % the discovery scan window widens from 15 s to 45 s.
+- **Field test harness** — an in-call screen that probes round-trip latency once a second,
+  counts frames and bytes in both directions, derives live kbps, tracks battery across the
+  call, and copies it all out as CSV.
 
 ## Setup
 
@@ -88,6 +93,25 @@ flutter test
 Two physical Android phones are required to test a call. WiFi Direct and Bluetooth RFCOMM both
 need real radios; neither works on an emulator.
 
+## Field test: how the numbers get produced
+
+Every figure quoted about Vois should come from this procedure, run on two real phones.
+
+1. Install `dist/vois-v*.apk` on both phones. Airplane mode on both — no cellular, no WiFi client.
+2. Connect. Bluetooth: *Nearby Phones* → tap the peer. WiFi Direct: 📡 → tap the peer.
+3. In the call, tap the ⏱ icon → **Probe once a second**.
+4. Hold the call for a fixed 10 minutes. Note the distance, and whether anyone walked.
+5. Tap **Copy CSV** on both phones and paste it somewhere durable before hanging up.
+6. Repeat at: same room, 30 m apart, through a floor, and with a third phone relaying.
+
+| Field | What it settles |
+|---|---|
+| `rtt_median_ms` | whether a live call feels interactive — you want well under 150 ms |
+| `kbps_out` | what the radio really carries, and the size of the case for Opus |
+| `elapsed_seconds` + `battery_drain_points` | endurance per hour on a mid-range phone |
+| `tx_frames` vs `rx_frames` | loss — they should track each other closely |
+| `ponges_received` / `pings_sent` | reliability under distance and movement |
+
 ## Known gaps, stated honestly
 
 - **Bitrate is ~129 kbps.** ADPCM at 8 bits/sample halves PCM16 but is not a VoIP codec. The
@@ -96,8 +120,11 @@ need real radios; neither works on an emulator.
   wants TCP's guaranteed delivery.
 - **One call at a time.** A relay request is ignored if a downstream already exists, so the
   chain is at most three phones and there is no mesh routing, TTL, or duplicate suppression.
-- **No reconnection.** Any socket close ends the call, and `groupConnected` / `isInitiator`
-  are not reset, so a dropped phone may need an app restart to rejoin.
+- **Reconnection is manual.** A hangup now tells the peer explicitly (`0x04`), and the Bluetooth
+  screen offers a one-tap *Reconnect to <peer>*, but there is no automatic re-dial: a link lost
+  mid-call still ends the call.
+- **One call per phone.** A second peer that connects during a call is refused rather than
+  stacked on top of the same microphone.
 - **Key exchange sends the AES key in plaintext** once the radio link is up, trusting that the
   Bluetooth pairing or WiFi Direct group is already private. SOS broadcast deliberately uses a
   fixed, publicly-known key so any nearby phone can decode a distress beacon.
