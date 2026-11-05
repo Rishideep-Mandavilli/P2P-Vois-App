@@ -1,3 +1,4 @@
+// Vois offline peer-to-peer radio communication module
 import 'dart:typed_data';
 
 /// Basic store-and-forward for SOS broadcasts: if an SOS is sent while no peers are in range, it's queued here

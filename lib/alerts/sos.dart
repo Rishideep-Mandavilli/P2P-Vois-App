@@ -1,3 +1,4 @@
+// Vois offline peer-to-peer radio communication module
 /// Preset distress categories — sent as a tiny coded payload instead of a
 /// spoken sentence, so an SOS gets through even when the link is too
 /// degraded to carry audio.

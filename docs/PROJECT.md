@@ -1,4 +1,5 @@
 # P2P Vois — what it is
+<!-- Vois Project Architecture and Implementation Specification -->
 
 The authoritative description of the project: what problem it solves, what is actually built,
 what has been measured, and what has not. Written to be read by a judge, a contributor or a

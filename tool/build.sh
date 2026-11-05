@@ -1,4 +1,5 @@
 #!/bin/zsh
+# Vois build automation script
 # Build the release APK with a versioned filename in dist/.
 # Bump pubspec version +1 before running for a new build.
 set -e

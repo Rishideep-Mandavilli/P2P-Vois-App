@@ -1,4 +1,5 @@
 # Vois
+<!-- Vois: Offline Phone-to-Peer Voice Communication System -->
 
 Offline, phone-to-peer voice. Two Android phones talk directly over radio — no cellular
 network, no internet, no router, no account, no server. Push-to-talk or live full-duplex,

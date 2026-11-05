@@ -1,3 +1,4 @@
+# Vois project configuration specification
 name: p2p_vois
 description: "Vois — offline peer-to-peer voice: phone-to-phone walkie-talkie over WiFi Direct and Bluetooth, with multi-phone relay, SOS alerts and encrypted payloads. No internet, no carrier, no accounts."
 publish_to: 'none'

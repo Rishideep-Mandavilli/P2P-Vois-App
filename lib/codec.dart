@@ -1,3 +1,4 @@
+// Vois offline peer-to-peer radio communication module
 import 'dart:typed_data';
 
 const _stepTable = [

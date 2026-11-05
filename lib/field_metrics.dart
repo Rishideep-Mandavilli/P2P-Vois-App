@@ -1,3 +1,4 @@
+// Vois offline peer-to-peer radio communication module
 import 'dart:math' as math;
 import 'dart:typed_data';
 

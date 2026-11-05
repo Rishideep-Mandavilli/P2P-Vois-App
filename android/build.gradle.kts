@@ -1,3 +1,4 @@
+// Vois Android Gradle build configuration
 allprojects {
     repositories {
         google()

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Vois autonomous relay and presentation suite
 """
 P2P Vois - Raspberry Pi 400 Autonomous Relay Daemon
 ---------------------------------------------------

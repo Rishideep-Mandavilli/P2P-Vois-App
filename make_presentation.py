@@ -1,3 +1,4 @@
+# Vois autonomous relay and presentation suite
 import os
 from pptx import Presentation
 from pptx.util import Inches, Pt

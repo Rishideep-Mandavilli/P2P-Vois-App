@@ -1,3 +1,4 @@
+// Vois offline peer-to-peer radio communication module
 import 'dart:math';
 
 /// Audio preprocessing filter for raw PCM16 samples:
