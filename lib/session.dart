@@ -354,6 +354,7 @@ class RadioSession {
       debugPrint('RadioSession: disconnect notify failed: $e');
     }
     await _setMic(false, onPcm: _send);
+    await audio.stopPlayback();
     await server.resetAudioMode();
     await _rxSub?.cancel();
     _rxSub = null;

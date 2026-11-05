@@ -13,6 +13,7 @@ import 'protocol.dart';
 import 'power/battery_saver.dart';
 import 'radio_server.dart';
 import 'session.dart';
+import 'tcp_channel.dart';
 import 'wifi_direct_server.dart';
 
 /// WiFi Direct (primary transport, Section 5) discovery + connect screen —
@@ -121,7 +122,7 @@ class _WifiDirectPageState extends State<WifiDirectPage> {
     }
     _callOpen = true;
     final session = RadioSession(widget.audio, widget.btServer,
-        transport: 'WiFi Direct');
+        transport: 'Pi Wi-Fi Relay');
     await session.start(channel, channel, isInitiator: isInitiator);
     if (!mounted) return;
     await Navigator.of(context).push(
@@ -131,6 +132,99 @@ class _WifiDirectPageState extends State<WifiDirectPage> {
     );
     await session.dispose();
     _callOpen = false;
+  }
+
+  Future<void> _connectToPiRelay([String? explicitHost, int port = 8988]) async {
+    if (_connecting) return;
+    setState(() {
+      _connecting = true;
+      _status = 'Connecting to Pi Relay...';
+    });
+
+    final candidates = explicitHost != null
+        ? [explicitHost]
+        : ['10.42.0.1', '10.155.221.42', '192.168.4.1'];
+
+    TcpByteChannel? channel;
+    String connectedHost = '';
+    Object? lastError;
+
+    for (final host in candidates) {
+      try {
+        channel = await TcpByteChannel.connect(
+          host,
+          port,
+          timeout: const Duration(milliseconds: 1200),
+        );
+        connectedHost = host;
+        break;
+      } catch (e) {
+        lastError = e;
+      }
+    }
+
+    if (channel == null) {
+      if (mounted) {
+        setState(() => _connecting = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Pi Relay connect failed: $lastError. Connect to Vois-Relay Wi-Fi or check IP!'),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+      }
+      return;
+    }
+
+    try {
+      if (!mounted) {
+        await channel.close();
+        return;
+      }
+      await _openCall(channel, 'Pi 400 Relay ($connectedHost)', isInitiator: true);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Pi Call error: $e'),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _connecting = false);
+    }
+  }
+
+  Future<void> _showCustomIpDialog() async {
+    final controller = TextEditingController(text: '10.42.0.1');
+    final result = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Enter Relay IP Address'),
+        content: TextField(
+          controller: controller,
+          decoration: const InputDecoration(
+            labelText: 'Relay IP',
+            hintText: '10.42.0.1 or 10.155.221.42',
+          ),
+          keyboardType: TextInputType.datetime,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
+            child: const Text('Connect'),
+          ),
+        ],
+      ),
+    );
+    if (result != null && result.isNotEmpty) {
+      await _connectToPiRelay(result);
+    }
   }
 
   Future<void> _broadcastMode() async {
@@ -231,6 +325,67 @@ class _WifiDirectPageState extends State<WifiDirectPage> {
               padding: const EdgeInsets.all(12),
               child: Text(_status!, style: const TextStyle(color: Colors.grey)),
             ),
+          Card(
+            margin: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+            color: Theme.of(context).colorScheme.surfaceContainerHighest,
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(Icons.router, color: Colors.green),
+                      const SizedBox(width: 8),
+                      const Expanded(
+                        child: Text(
+                          'Pi 400 Relay Station',
+                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                        ),
+                      ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: Colors.green.withOpacity(0.15),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: const Text(
+                          '16kHz HD',
+                          style: TextStyle(fontSize: 11, color: Colors.green, fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  const Text(
+                    'Direct Wi-Fi Call via Raspberry Pi 400 (TCP 8988)',
+                    style: TextStyle(fontSize: 12, color: Colors.grey),
+                  ),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: FilledButton.icon(
+                          onPressed: _connecting ? null : () => _connectToPiRelay(),
+                          icon: const Icon(Icons.call, size: 18),
+                          label: const Text('Join Pi Relay (10.42.0.1)'),
+                          style: FilledButton.styleFrom(
+                            backgroundColor: Colors.green.shade700,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      IconButton.filledTonal(
+                        icon: const Icon(Icons.settings_ethernet, size: 18),
+                        tooltip: 'Custom Relay IP',
+                        onPressed: _showCustomIpDialog,
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: SizedBox(

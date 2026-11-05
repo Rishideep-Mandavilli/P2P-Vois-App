@@ -83,7 +83,7 @@ class AudioEngine {
     if (_playing) return;
     _playing = true;
     _jitter.clear();
-    await _player!.startPlayerFromStream(
+    await _player?.startPlayerFromStream(
       codec: Codec.pcm16,
       numChannels: 1,
       sampleRate: kSampleRate,
@@ -92,23 +92,32 @@ class AudioEngine {
     );
   }
 
+  /// Stop playback immediately and flush any queued audio in the hardware buffer.
+  Future<void> stopPlayback() async {
+    _playing = false;
+    _jitter.clear();
+    try {
+      await _player?.stopPlayer();
+    } catch (_) {}
+  }
+
   /// Feed a decoded PCM frame into the playback stream.
-  /// Bounded to 2 frames (40ms) to smooth RFCOMM jitter without ever
-  /// accumulating latency or queue buildup.
+  /// Strictly drops older frames if the hardware queue has not consumed them yet,
+  /// preventing latency backlog buildup.
   void play(Uint8List pcmBytes) {
     if (!_playing || _player == null) return;
     _jitter.add(pcmBytes);
-    while (_jitter.length > 2) {
+    while (_jitter.length > 1) {
       _jitter.removeAt(0);
     }
-    _player?.uint8ListSink?.add(_jitter.removeAt(0));
+    try {
+      _player?.uint8ListSink?.add(_jitter.removeAt(0));
+    } catch (_) {}
   }
 
   Future<void> dispose() async {
-    _playing = false;
-    _jitter.clear();
-    await _recorder?.stopRecorder();
-    await _player?.stopPlayer();
+    await stopPlayback();
+    await stopListening();
     await _recorder?.closeRecorder();
     await _player?.closePlayer();
   }

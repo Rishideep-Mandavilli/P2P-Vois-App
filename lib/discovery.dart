@@ -9,6 +9,7 @@ import 'call_page.dart';
 import 'radio_server.dart';
 import 'session.dart';
 import 'power/battery_saver.dart';
+import 'tcp_channel.dart';
 import 'wifi_direct_page.dart';
 
 class DiscoveryPage extends StatefulWidget {
@@ -193,6 +194,117 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
     await widget.server.startListening();
   }
 
+  Future<void> _connectToPiRelay([String? explicitHost, int port = 8988]) async {
+    if (_connecting) return;
+    setState(() => _connecting = true);
+
+    final candidates = explicitHost != null
+        ? [explicitHost]
+        : ['10.42.0.1', '10.155.221.42', '192.168.4.1'];
+
+    TcpByteChannel? channel;
+    String connectedHost = '';
+    Object? lastError;
+
+    for (final host in candidates) {
+      try {
+        channel = await TcpByteChannel.connect(
+          host,
+          port,
+          timeout: const Duration(milliseconds: 1200),
+        );
+        connectedHost = host;
+        break;
+      } catch (e) {
+        lastError = e;
+      }
+    }
+
+    if (channel == null) {
+      if (mounted) {
+        setState(() => _connecting = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Pi Relay connect failed: $lastError. Connect to Vois-Relay Wi-Fi or check IP!'),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+      }
+      return;
+    }
+
+    try {
+      if (!mounted) {
+        await channel.close();
+        return;
+      }
+      if (_callOpen) {
+        await channel.close();
+        return;
+      }
+      _callOpen = true;
+      final session = RadioSession(
+        widget.audio,
+        widget.server,
+        transport: 'Pi Wi-Fi Relay',
+      );
+      await session.start(channel, channel, isInitiator: true);
+      if (!mounted) return;
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => CallPage(
+            deviceName: 'Pi 400 Relay ($connectedHost)',
+            session: session,
+          ),
+        ),
+      );
+      await session.dispose();
+      _callOpen = false;
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Pi Call error: $e'),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _connecting = false);
+    }
+  }
+
+  Future<void> _showCustomIpDialog() async {
+    final controller = TextEditingController(text: '10.42.0.1');
+    final result = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Enter Relay IP Address'),
+        content: TextField(
+          controller: controller,
+          decoration: const InputDecoration(
+            labelText: 'Relay IP',
+            hintText: '10.42.0.1 or 10.155.221.42',
+          ),
+          keyboardType: TextInputType.datetime,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
+            child: const Text('Connect'),
+          ),
+        ],
+      ),
+    );
+    if (result != null && result.isNotEmpty) {
+      await _connectToPiRelay(result);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final paired = _devices.where((d) => d.bonded).toList();
@@ -231,8 +343,46 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
       ),
       body: Column(
         children: [
+          Card(
+            margin: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+            color: Theme.of(context).colorScheme.surfaceContainerHighest,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              child: Row(
+                children: [
+                  const Icon(Icons.router, color: Colors.green),
+                  const SizedBox(width: 10),
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Pi 400 Wi-Fi Call Relay',
+                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                        ),
+                        Text(
+                          '16kHz HD Voice • 10.42.0.1:8988',
+                          style: TextStyle(fontSize: 11, color: Colors.grey),
+                        ),
+                      ],
+                    ),
+                  ),
+                  FilledButton.tonalIcon(
+                    onPressed: _connecting ? null : () => _connectToPiRelay(),
+                    icon: const Icon(Icons.call, size: 16),
+                    label: const Text('Join'),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.more_vert, size: 20),
+                    tooltip: 'Custom IP',
+                    onPressed: _showCustomIpDialog,
+                  ),
+                ],
+              ),
+            ),
+          ),
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
             child: SizedBox(
               width: double.infinity,
               height: 52,
