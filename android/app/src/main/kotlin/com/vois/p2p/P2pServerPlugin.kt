@@ -82,8 +82,16 @@ class P2pServerPlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCallHa
     private val connectionAddress = ConcurrentHashMap<Int, String>()
 
     // Background write executor and pending write tracking for anti-bufferbloat.
-    private val writeExecutor = Executors.newSingleThreadExecutor()
+    private var writeExecutor = Executors.newSingleThreadExecutor()
     private val pendingAudioFrames = ConcurrentHashMap<Int, AtomicInteger>()
+
+    @Synchronized
+    private fun getWriteExecutor(): java.util.concurrent.ExecutorService {
+        if (writeExecutor.isShutdown || writeExecutor.isTerminated) {
+            writeExecutor = Executors.newSingleThreadExecutor()
+        }
+        return writeExecutor
+    }
 
 
     // Discovery + bonding.
@@ -688,9 +696,9 @@ class P2pServerPlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCallHa
 
         if (isAudio) {
             val audioCount = pendingAudioFrames.getOrPut(id) { AtomicInteger(0) }
-            // If 2 or more audio frames are already queued in flight, drop the
-            // older frame to prevent bufferbloat and guarantee real-time latency (<40ms).
-            if (audioCount.get() >= 2) {
+            // Safe queue backlog guard: only shed if backed up by more than 10 frames (200ms)
+            // to prevent bufferbloat without EVER dropping speech frames during normal talking.
+            if (audioCount.get() >= 10) {
                 result.success(true)
                 return
             }
@@ -699,7 +707,8 @@ class P2pServerPlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCallHa
 
         result.success(true)
 
-        writeExecutor.execute {
+        val executor = getWriteExecutor()
+        executor.execute {
             try {
                 if (sock.isConnected) {
                     sock.outputStream.write(bytes)

@@ -85,8 +85,8 @@ void main() {
 
     test('NoiseGate default parameters and smooth cosine taper', () {
       final gate = NoiseGate();
-      expect(gate.thresholdRms, 130);
-      expect(gate.hangoverFrames, 10);
+      expect(gate.thresholdRms, 80);
+      expect(gate.hangoverFrames, 15);
 
       // Speech frame above 130 RMS (sine wave amplitude ~300 -> RMS ~212)
       final speech = List.generate(

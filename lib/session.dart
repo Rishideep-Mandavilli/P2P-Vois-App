@@ -328,8 +328,7 @@ class RadioSession {
 
   void _send(Uint8List pcm) {
     final samples = pcmToSamples(pcm);
-    final hasSpeech = _filter.process(samples);
-    if (!hasSpeech) return;
+    _filter.process(samples);
     final encoded = _encoder.encode(samples);
     final frame = packAudio(encoded);
     metrics.recordTx(frame);

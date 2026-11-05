@@ -75,8 +75,16 @@ class WifiDirectPlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCallH
     private var acceptThread: Thread? = null
     private val connections = ConcurrentHashMap<Int, Socket>()
     private val nextConnectionId = AtomicInteger(1)
-    private val writeExecutor = Executors.newSingleThreadExecutor()
+    private var writeExecutor = Executors.newSingleThreadExecutor()
     private val pendingAudioFrames = ConcurrentHashMap<Int, AtomicInteger>()
+
+    @Synchronized
+    private fun getWriteExecutor(): java.util.concurrent.ExecutorService {
+        if (writeExecutor.isShutdown || writeExecutor.isTerminated) {
+            writeExecutor = Executors.newSingleThreadExecutor()
+        }
+        return writeExecutor
+    }
 
     override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         applicationContext = binding.applicationContext
@@ -387,7 +395,7 @@ class WifiDirectPlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCallH
         val isAudio = bytes.isNotEmpty() && bytes[0] == 1.toByte()
         if (isAudio) {
             val audioCount = pendingAudioFrames.getOrPut(id) { AtomicInteger(0) }
-            if (audioCount.get() >= 2) {
+            if (audioCount.get() >= 10) {
                 result.success(true)
                 return
             }
@@ -396,7 +404,8 @@ class WifiDirectPlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCallH
 
         result.success(true)
 
-        writeExecutor.execute {
+        val executor = getWriteExecutor()
+        executor.execute {
             try {
                 if (sock.isConnected) {
                     sock.getOutputStream().write(bytes)
