@@ -36,10 +36,6 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
   /// forcing a fresh scan.
   NativeDevice? _lastDevice;
 
-  // Buffers the first incoming connection while waiting for the 2nd (dual tunnel).
-  // Keyed by remote address to handle multiple simultaneous callers.
-  final Map<String, int> _pendingIncomingRx = {};
-
   @override
   void initState() {
     super.initState();
@@ -56,21 +52,18 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
     });
     _incomingSub = widget.server.events.listen((e) {
       final event = e['event'] as String;
-      if (event == 'closed') {
-        final id = e['id'] as int;
-        _pendingIncomingRx.removeWhere((_, v) => v == id);
-        return;
-      }
       if (event != 'accepted') return;
       final id = e['id'] as int;
-      final addr = e['address'] as String;
-      final role = e['role'] as String;
-      if (role == 'rx') {
-        _pendingIncomingRx[addr] = id;
-      } else if (role == 'tx' && _pendingIncomingRx.containsKey(addr)) {
-        final rxId = _pendingIncomingRx.remove(addr)!;
-        _openCallDual(rxId, id, 'Incoming call', isInitiator: false);
+      final addr = (e['address'] as String?) ?? '';
+      if (_callOpen) {
+        widget.server.close(id);
+        return;
       }
+      final peer = _devices.where((d) => d.address == addr).firstOrNull;
+      final name = peer?.name.isNotEmpty == true
+          ? peer!.name
+          : (addr.isNotEmpty ? addr : 'Incoming call');
+      _openCall(id, name, isInitiator: false);
     });
     _loadBonded();
     BatterySaver.instance.lowPowerNotifier.addListener(_onBatteryChanged);
@@ -147,15 +140,14 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
         await widget.server.bond(device.address);
         await Future.delayed(const Duration(seconds: 3));
       }
-      final dual = await widget.server.connectDual(device.address);
+      final id = await widget.server.connect(device.address);
       if (!mounted) return;
       final targets = _devices
           .where((d) => d.address != device.address)
           .toList();
       _lastDevice = device;
-      await _openCallDual(
-        dual.rxId,
-        dual.txId,
+      await _openCall(
+        id,
         device.name.isEmpty ? device.address : device.name,
         relayTargets: targets,
         isInitiator: true,
@@ -172,23 +164,20 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
     }
   }
 
-  Future<void> _openCallDual(
-    int rxId,
-    int txId,
+  Future<void> _openCall(
+    int id,
     String name, {
     List<NativeDevice> relayTargets = const [],
     required bool isInitiator,
   }) async {
     if (_callOpen) {
-      await widget.server.close(rxId);
-      await widget.server.close(txId);
+      await widget.server.close(id);
       return;
     }
     _callOpen = true;
-    final txCh = RadioChannel(widget.server, txId);
-    final rxCh = RadioChannel(widget.server, rxId);
+    final ch = RadioChannel(widget.server, id);
     final session = RadioSession(widget.audio, widget.server);
-    await session.start(txCh, rxCh, isInitiator: isInitiator);
+    await session.start(ch, ch, isInitiator: isInitiator);
     if (!mounted) return;
     await Navigator.of(context).push(
       MaterialPageRoute(
@@ -199,6 +188,7 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
         ),
       ),
     );
+    await session.dispose();
     _callOpen = false;
     await widget.server.startListening();
   }

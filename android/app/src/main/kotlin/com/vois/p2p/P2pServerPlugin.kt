@@ -496,8 +496,10 @@ class P2pServerPlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCallHa
             while (!Thread.currentThread().isInterrupted) {
                 val accepted = try {
                     socket.accept()
-                } catch (_: Exception) {
-                    break
+                } catch (e: Exception) {
+                    if (serverSocket == null || Thread.currentThread().isInterrupted) break
+                    try { Thread.sleep(300) } catch (_: InterruptedException) { break }
+                    continue
                 }
                 val id = nextConnectionId.getAndIncrement()
                 connections[id] = accepted
@@ -530,14 +532,53 @@ class P2pServerPlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCallHa
             try {
                 val adapter = bluetoothAdapter()
                     ?: throw IOException("bluetooth unavailable")
+                cancelDiscovery()
                 val device = adapter.getRemoteDevice(address)
-                socket = device.createRfcommSocketToServiceRecord(UUID.fromString(SPP_UUID))
-                socket!!.connect()
+                
+                var lastError: Exception? = null
+                var connected = false
+
+                // Try secure RFCOMM first with retry
+                for (attempt in 1..3) {
+                    try {
+                        cancelDiscovery()
+                        socket = device.createRfcommSocketToServiceRecord(UUID.fromString(SPP_UUID))
+                        socket.connect()
+                        connected = true
+                        break
+                    } catch (e: Exception) {
+                        lastError = e
+                        try { socket?.close() } catch (_: Exception) {}
+                        socket = null
+                        if (attempt < 3) {
+                            try { Thread.sleep(300) } catch (_: InterruptedException) { break }
+                        }
+                    }
+                }
+
+                if (!connected) {
+                    // Fallback to insecure RFCOMM socket
+                    try {
+                        cancelDiscovery()
+                        socket = device.createInsecureRfcommSocketToServiceRecord(UUID.fromString(SPP_UUID))
+                        socket.connect()
+                        connected = true
+                    } catch (e: Exception) {
+                        lastError = e
+                        try { socket?.close() } catch (_: Exception) {}
+                        socket = null
+                    }
+                }
+
+                if (!connected || socket == null) {
+                    throw lastError ?: IOException("connect failed")
+                }
+
                 val id = nextConnectionId.getAndIncrement()
-                connections[id] = socket!!
+                connections[id] = socket
                 connectionAddress[id] = address
                 emit(mapOf("event" to "client_connected", "id" to id, "address" to address))
-                startReadLoop(id, socket!!)
+                startReadLoop(id, socket)
                 val okId = id
                 mainHandler.post { result.success(okId) }
             } catch (e: Exception) {
@@ -629,11 +670,24 @@ class P2pServerPlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCallHa
         val id = call.argument<Int>("id") ?: -1
         val bytes = call.argument<ByteArray>("bytes") ?: ByteArray(0)
         val sock = connections[id]
+        if (sock == null || !sock.isConnected) {
+            result.error("write_error", "connection $id not open", null)
+            return
+        }
         try {
-            sock?.outputStream?.write(bytes)
-                ?: throw IOException("connection $id not open")
+            sock.outputStream.write(bytes)
             result.success(true)
         } catch (e: Exception) {
+            connections.remove(id)
+            val addr = connectionAddress.remove(id)
+            if (addr != null) {
+                val counter = connectionCountPerAddress[addr]
+                if (counter != null && counter.decrementAndGet() <= 0) {
+                    connectionCountPerAddress.remove(addr)
+                }
+            }
+            try { sock.close() } catch (_: Exception) {}
+            emit(mapOf("event" to "closed", "id" to id))
             result.error("write_error", e.message, null)
         }
     }

@@ -135,16 +135,47 @@ class WifiDirectServer {
 class WifiChannel implements ByteChannel {
   final WifiDirectServer server;
   final int id;
-  WifiChannel(this.server, this.id);
+  bool _closed = false;
+  late final StreamController<Uint8List> _controller;
+  StreamSubscription? _dataSub;
+  StreamSubscription? _closeSub;
 
-  @override
-  Stream<Uint8List> get input => server.dataOf(id);
-
-  @override
-  void add(Uint8List bytes) {
-    server.write(id, bytes).catchError((_) {});
+  WifiChannel(this.server, this.id) {
+    _controller = StreamController<Uint8List>(onCancel: () => close());
+    _dataSub = server.dataOf(id).listen((data) {
+      if (!_closed && !_controller.isClosed) {
+        _controller.add(data);
+      }
+    });
+    _closeSub = server.closedOf(id).listen((closedId) {
+      if (closedId == id) {
+        close();
+      }
+    });
   }
 
   @override
-  Future<void> close() => server.close(id);
+  Stream<Uint8List> get input => _controller.stream;
+
+  @override
+  void add(Uint8List bytes) {
+    if (_closed) return;
+    server.write(id, bytes).catchError((_) {
+      close();
+    });
+  }
+
+  @override
+  Future<void> close() async {
+    if (_closed) return;
+    _closed = true;
+    await _dataSub?.cancel();
+    _closeSub?.cancel();
+    if (!_controller.isClosed) {
+      await _controller.close();
+    }
+    try {
+      await server.close(id);
+    } catch (_) {}
+  }
 }

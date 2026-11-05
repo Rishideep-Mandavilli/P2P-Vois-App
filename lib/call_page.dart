@@ -71,6 +71,7 @@ class _CallPageState extends State<CallPage> {
     widget.session.relaying.removeListener(_onRelaying);
     widget.session.peerLeft.removeListener(_onPeerLeft);
     widget.session.incomingAlert.removeListener(_onAlert);
+    widget.session.dispose();
     super.dispose();
   }
 

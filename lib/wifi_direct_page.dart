@@ -129,6 +129,7 @@ class _WifiDirectPageState extends State<WifiDirectPage> {
         builder: (_) => CallPage(deviceName: name, session: session),
       ),
     );
+    await session.dispose();
     _callOpen = false;
   }
 
