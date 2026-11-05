@@ -187,11 +187,19 @@ class RadioServer {
     return (await _method.invokeMethod('getBatteryLevel')) as int?;
   }
 
-  Future<void> setEarpiece() async {
-    await _method.invokeMethod('setEarpiece');
+  Future<bool> setEarpiece() async {
+    return (await _method.invokeMethod('setEarpiece')) as bool? ?? false;
   }
 
-  Future<void> setLoudspeaker() async {
-    await _method.invokeMethod('setLoudspeaker');
+  Future<bool> setLoudspeaker() async {
+    return (await _method.invokeMethod('setLoudspeaker')) as bool? ?? false;
+  }
+
+  Future<void> resetAudioMode() async {
+    await _method.invokeMethod('resetAudioMode');
+  }
+
+  Future<bool> isEarpieceAvailable() async {
+    return (await _method.invokeMethod('isEarpieceAvailable')) as bool? ?? false;
   }
 }

@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 
 import 'alerts/sos.dart';
 import 'audio.dart';
+import 'audio_filter.dart';
 import 'codec.dart';
 import 'crypto/payload_cipher.dart';
 import 'field_metrics.dart';
@@ -53,6 +54,7 @@ class RadioSession {
   StreamSubscription<Uint8List>? _downSub;
   final AdpcmEncoder _encoder = AdpcmEncoder();
   final AdpcmDecoder _decoder = AdpcmDecoder();
+  final AudioFilter _filter = AudioFilter();
   final FrameAssembler _upAssembler = FrameAssembler();
   final FrameAssembler _downAssembler = FrameAssembler();
   bool _micOn = false;
@@ -88,7 +90,12 @@ class RadioSession {
       _rxSub = rxChannel.input.listen(_onUpBytes, onDone: _onPeerGone);
       await audio.startPlayback();
       if (_disposed) return;
-      await server.setEarpiece();
+      final hasEarpiece = await server.isEarpieceAvailable();
+      if (hasEarpiece) {
+        await server.setEarpiece();
+      } else {
+        await server.setLoudspeaker();
+      }
       if (_disposed) return;
       if (isInitiator) {
         final key = PayloadCipher.generateKey();
@@ -278,6 +285,7 @@ class RadioSession {
     if (_disposed || on == _micOn) return;
     _micOn = on;
     if (on) {
+      _filter.reset();
       _encoder.reset();
       await audio.startListening(onPcm);
     } else {
@@ -286,7 +294,9 @@ class RadioSession {
   }
 
   void _send(Uint8List pcm) {
-    final encoded = _encoder.encode(pcmToSamples(pcm));
+    final samples = pcmToSamples(pcm);
+    _filter.process(samples);
+    final encoded = _encoder.encode(samples);
     final frame = packAudio(encoded);
     metrics.recordTx(frame);
     _txChannel?.add(frame);
@@ -311,7 +321,7 @@ class RadioSession {
       debugPrint('RadioSession: disconnect notify failed: $e');
     }
     await _setMic(false, onPcm: _send);
-    await server.setLoudspeaker();
+    await server.resetAudioMode();
     await _rxSub?.cancel();
     _rxSub = null;
     await _downSub?.cancel();

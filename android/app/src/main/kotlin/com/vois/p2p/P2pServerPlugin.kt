@@ -12,11 +12,13 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.location.LocationManager
+import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.media.ToneGenerator
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
@@ -235,12 +237,19 @@ class P2pServerPlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCallHa
                 result.success(true)
             }
             "setEarpiece" -> {
-                setEarpiece()
-                result.success(true)
+                val ok = setEarpiece()
+                result.success(ok)
             }
             "setLoudspeaker" -> {
-                setLoudspeaker()
+                val ok = setLoudspeaker()
+                result.success(ok)
+            }
+            "resetAudioMode" -> {
+                resetAudioMode()
                 result.success(true)
+            }
+            "isEarpieceAvailable" -> {
+                result.success(isEarpieceAvailable())
             }
             else -> result.notImplemented()
         }
@@ -753,25 +762,110 @@ class P2pServerPlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCallHa
         alertTone = null
     }
 
-    // ---- Audio routing (earpiece for calls) ----------------------------------
+    // ---- Audio routing & Proximity ------------------------------------------
+
+    private var proximityWakeLock: PowerManager.WakeLock? = null
 
     private fun audioManager(): AudioManager? {
         val ctx = activityBinding?.activity ?: applicationContext ?: return null
         return ctx.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
     }
 
-    private fun setEarpiece() {
-        val am = audioManager() ?: return
+    private fun acquireProximityLock() {
         try {
-            am.mode = AudioManager.MODE_IN_COMMUNICATION
-            am.isSpeakerphoneOn = false
+            val ctx = activityBinding?.activity ?: applicationContext ?: return
+            val pm = ctx.getSystemService(Context.POWER_SERVICE) as? PowerManager ?: return
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                if (pm.isWakeLockLevelSupported(PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK)) {
+                    if (proximityWakeLock == null) {
+                        proximityWakeLock = pm.newWakeLock(
+                            PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK,
+                            "vois:proximity"
+                        )
+                    }
+                    if (proximityWakeLock?.isHeld == false) {
+                        proximityWakeLock?.acquire(3600000L) // 1 hour max safety timeout
+                    }
+                }
+            }
         } catch (_: Exception) {}
     }
 
-    private fun setLoudspeaker() {
+    private fun releaseProximityLock() {
+        try {
+            if (proximityWakeLock?.isHeld == true) {
+                proximityWakeLock?.release()
+            }
+        } catch (_: Exception) {}
+    }
+
+    private fun isEarpieceAvailable(): Boolean {
+        val am = audioManager() ?: return false
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            am.availableCommunicationDevices.any { it.type == AudioDeviceInfo.TYPE_BUILTIN_EARPIECE }
+        } else {
+            val ctx = applicationContext ?: return false
+            ctx.packageManager.hasSystemFeature(PackageManager.FEATURE_TELEPHONY)
+        }
+    }
+
+    private fun setEarpiece(): Boolean {
+        val am = audioManager() ?: return false
+        return try {
+            am.mode = AudioManager.MODE_IN_COMMUNICATION
+            var routed = false
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val devices = am.availableCommunicationDevices
+                val earpiece = devices.firstOrNull { it.type == AudioDeviceInfo.TYPE_BUILTIN_EARPIECE }
+                if (earpiece != null) {
+                    routed = am.setCommunicationDevice(earpiece)
+                }
+            }
+            if (!routed) {
+                @Suppress("DEPRECATION")
+                am.isSpeakerphoneOn = false
+            }
+            acquireProximityLock()
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private fun setLoudspeaker(): Boolean {
+        val am = audioManager() ?: return false
+        return try {
+            releaseProximityLock()
+            am.mode = AudioManager.MODE_IN_COMMUNICATION
+            var routed = false
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val devices = am.availableCommunicationDevices
+                val speaker = devices.firstOrNull { it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER }
+                if (speaker != null) {
+                    routed = am.setCommunicationDevice(speaker)
+                } else {
+                    am.clearCommunicationDevice()
+                }
+            }
+            if (!routed) {
+                @Suppress("DEPRECATION")
+                am.isSpeakerphoneOn = true
+            }
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private fun resetAudioMode() {
+        releaseProximityLock()
         val am = audioManager() ?: return
         try {
-            am.isSpeakerphoneOn = true
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                am.clearCommunicationDevice()
+            }
+            @Suppress("DEPRECATION")
+            am.isSpeakerphoneOn = false
             am.mode = AudioManager.MODE_NORMAL
         } catch (_: Exception) {}
     }

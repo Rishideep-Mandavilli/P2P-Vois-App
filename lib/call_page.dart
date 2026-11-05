@@ -26,6 +26,8 @@ class _CallPageState extends State<CallPage> {
   bool _live = true;
   bool _talking = false;
   bool _muted = false;
+  bool _isSpeaker = false;
+  bool _hasEarpiece = true;
   bool _relaySent = false;
   String _localName = 'You';
   List<String> _chain = [];
@@ -40,6 +42,14 @@ class _CallPageState extends State<CallPage> {
     super.initState();
     widget.session.server.getName().then((n) {
       if (n.isNotEmpty && mounted) setState(() => _localName = n);
+    });
+    widget.session.server.isEarpieceAvailable().then((available) {
+      if (mounted) {
+        setState(() {
+          _hasEarpiece = available;
+          if (!available) _isSpeaker = true;
+        });
+      }
     });
     _chain = widget.session.chain.value;
     widget.session.chain.addListener(_onChain);
@@ -138,10 +148,29 @@ class _CallPageState extends State<CallPage> {
     setState(() => _live = live);
     if (live) {
       await _startLive();
+      if (_hasEarpiece && _isSpeaker) {
+        await widget.session.server.setEarpiece();
+        if (mounted) setState(() => _isSpeaker = false);
+      }
     } else {
       await widget.session.stopCall();
       setState(() => _muted = false);
+      if (_hasEarpiece && !_isSpeaker) {
+        await widget.session.server.setLoudspeaker();
+        if (mounted) setState(() => _isSpeaker = true);
+      }
     }
+  }
+
+  Future<void> _toggleSpeaker() async {
+    if (!_hasEarpiece) return;
+    final nextSpeaker = !_isSpeaker;
+    if (nextSpeaker) {
+      await widget.session.server.setLoudspeaker();
+    } else {
+      await widget.session.server.setEarpiece();
+    }
+    if (mounted) setState(() => _isSpeaker = nextSpeaker);
   }
 
   Future<void> _talk(bool start) async {
@@ -177,6 +206,15 @@ class _CallPageState extends State<CallPage> {
         elevation: 0,
         automaticallyImplyLeading: false,
         actions: [
+          if (_hasEarpiece)
+            IconButton(
+              icon: Icon(
+                _isSpeaker ? Icons.volume_up : Icons.phone_in_talk,
+                color: _isSpeaker ? Colors.amber : Colors.white70,
+              ),
+              tooltip: _isSpeaker ? 'Switch to Earpiece' : 'Switch to Speakerphone',
+              onPressed: _toggleSpeaker,
+            ),
           IconButton(
             icon: const Icon(Icons.speed, color: Colors.white70),
             tooltip: 'Field test measurements',
@@ -302,6 +340,44 @@ class _CallPageState extends State<CallPage> {
                     onSelectionChanged: (s) => _switchMode(s.first),
                     style: const ButtonStyle(
                       visualDensity: VisualDensity.compact,
+                    ),
+                  ),
+                ),
+              if (!_relaying && _hasEarpiece)
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: InkWell(
+                    onTap: _toggleSpeaker,
+                    borderRadius: BorderRadius.circular(16),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: Colors.white10,
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: Colors.white24, width: 0.8),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            _isSpeaker ? Icons.volume_up : Icons.phone_in_talk,
+                            size: 14,
+                            color:
+                                _isSpeaker ? Colors.amber : Colors.greenAccent,
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            _isSpeaker ? 'Loudspeaker' : 'Earpiece',
+                            style: TextStyle(
+                              color: _isSpeaker
+                                  ? Colors.amber
+                                  : Colors.greenAccent,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ),
