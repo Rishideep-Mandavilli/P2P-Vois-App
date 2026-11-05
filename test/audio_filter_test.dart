@@ -82,5 +82,22 @@ void main() {
       }
       expect(dotProduct, greaterThan(0));
     });
+
+    test('NoiseGate default parameters and smooth cosine taper', () {
+      final gate = NoiseGate();
+      expect(gate.thresholdRms, 130);
+      expect(gate.hangoverFrames, 10);
+
+      // Speech frame above 130 RMS (sine wave amplitude ~300 -> RMS ~212)
+      final speech = List.generate(
+        kFrameSamples,
+        (i) => (sin(i * 2 * pi * 440 / kSampleRate) * 300).round(),
+      );
+      expect(gate.process(speech), isTrue);
+
+      // Quiet frames in hangover
+      final quiet = List.filled(kFrameSamples, 10);
+      expect(gate.process(quiet), isTrue);
+    });
   });
 }

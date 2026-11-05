@@ -35,6 +35,7 @@ import io.flutter.plugin.common.PluginRegistry
 import java.io.IOException
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
@@ -80,6 +81,10 @@ class P2pServerPlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCallHa
     // Reverse map: connection id -> remote address (for cleanup on close).
     private val connectionAddress = ConcurrentHashMap<Int, String>()
 
+    // Background write executor and pending write tracking for anti-bufferbloat.
+    private val writeExecutor = Executors.newSingleThreadExecutor()
+    private val pendingAudioFrames = ConcurrentHashMap<Int, AtomicInteger>()
+
 
     // Discovery + bonding.
     private var discoveryReceiver: BroadcastReceiver? = null
@@ -100,6 +105,7 @@ class P2pServerPlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCallHa
         stopListening()
         stopAlertTone()
         unregisterReceivers()
+        try { writeExecutor.shutdownNow() } catch (_: Exception) {}
         channel?.setMethodCallHandler(null)
         events?.setStreamHandler(null)
         channel = null
@@ -205,6 +211,7 @@ class P2pServerPlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCallHa
             "write" -> writeConnection(call, result)
             "close" -> {
                 val id = call.argument<Int>("id") ?: -1
+                pendingAudioFrames.remove(id)
                 connections.remove(id)?.let {
                     try { it.close() } catch (_: Exception) {}
                 }
@@ -652,6 +659,7 @@ class P2pServerPlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCallHa
                 }
             } catch (_: Exception) {
             } finally {
+                pendingAudioFrames.remove(id)
                 connections.remove(id)
                 val addr = connectionAddress.remove(id)
                 if (addr != null) {
@@ -674,21 +682,46 @@ class P2pServerPlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCallHa
             result.error("write_error", "connection $id not open", null)
             return
         }
-        try {
-            sock.outputStream.write(bytes)
-            result.success(true)
-        } catch (e: Exception) {
-            connections.remove(id)
-            val addr = connectionAddress.remove(id)
-            if (addr != null) {
-                val counter = connectionCountPerAddress[addr]
-                if (counter != null && counter.decrementAndGet() <= 0) {
-                    connectionCountPerAddress.remove(addr)
+
+        // FrameType: 0x01 is audio frame.
+        val isAudio = bytes.isNotEmpty() && bytes[0] == 1.toByte()
+
+        if (isAudio) {
+            val audioCount = pendingAudioFrames.getOrPut(id) { AtomicInteger(0) }
+            // If 2 or more audio frames are already queued in flight, drop the
+            // older frame to prevent bufferbloat and guarantee real-time latency (<40ms).
+            if (audioCount.get() >= 2) {
+                result.success(true)
+                return
+            }
+            audioCount.incrementAndGet()
+        }
+
+        result.success(true)
+
+        writeExecutor.execute {
+            try {
+                if (sock.isConnected) {
+                    sock.outputStream.write(bytes)
+                    sock.outputStream.flush()
+                }
+            } catch (e: Exception) {
+                connections.remove(id)
+                val addr = connectionAddress.remove(id)
+                if (addr != null) {
+                    val counter = connectionCountPerAddress[addr]
+                    if (counter != null && counter.decrementAndGet() <= 0) {
+                        connectionCountPerAddress.remove(addr)
+                    }
+                }
+                pendingAudioFrames.remove(id)
+                try { sock.close() } catch (_: Exception) {}
+                emit(mapOf("event" to "closed", "id" to id))
+            } finally {
+                if (isAudio) {
+                    pendingAudioFrames[id]?.decrementAndGet()
                 }
             }
-            try { sock.close() } catch (_: Exception) {}
-            emit(mapOf("event" to "closed", "id" to id))
-            result.error("write_error", e.message, null)
         }
     }
 

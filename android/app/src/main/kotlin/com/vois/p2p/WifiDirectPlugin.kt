@@ -29,6 +29,7 @@ import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
@@ -74,6 +75,8 @@ class WifiDirectPlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCallH
     private var acceptThread: Thread? = null
     private val connections = ConcurrentHashMap<Int, Socket>()
     private val nextConnectionId = AtomicInteger(1)
+    private val writeExecutor = Executors.newSingleThreadExecutor()
+    private val pendingAudioFrames = ConcurrentHashMap<Int, AtomicInteger>()
 
     override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         applicationContext = binding.applicationContext
@@ -90,6 +93,7 @@ class WifiDirectPlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCallH
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         stopServer()
         unregisterReceiver()
+        try { writeExecutor.shutdownNow() } catch (_: Exception) {}
         channel?.setMethodCallHandler(null)
         events?.setStreamHandler(null)
         channel = null
@@ -166,6 +170,7 @@ class WifiDirectPlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCallH
             "write" -> writeConnection(call, result)
             "close" -> {
                 val id = call.argument<Int>("id") ?: -1
+                pendingAudioFrames.remove(id)
                 connections.remove(id)?.let {
                     try { it.close() } catch (_: Exception) {}
                 }
@@ -362,6 +367,7 @@ class WifiDirectPlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCallH
                 }
             } catch (_: Exception) {
             } finally {
+                pendingAudioFrames.remove(id)
                 connections.remove(id)
                 try { socket.close() } catch (_: Exception) {}
                 emit(mapOf("event" to "closed", "id" to id))
@@ -373,12 +379,39 @@ class WifiDirectPlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCallH
         val id = call.argument<Int>("id") ?: -1
         val bytes = call.argument<ByteArray>("bytes") ?: ByteArray(0)
         val sock = connections[id]
-        try {
-            sock?.getOutputStream()?.write(bytes)
-                ?: throw IOException("connection $id not open")
-            result.success(true)
-        } catch (e: Exception) {
-            result.error("write_error", e.message, null)
+        if (sock == null || !sock.isConnected) {
+            result.error("write_error", "connection $id not open", null)
+            return
+        }
+
+        val isAudio = bytes.isNotEmpty() && bytes[0] == 1.toByte()
+        if (isAudio) {
+            val audioCount = pendingAudioFrames.getOrPut(id) { AtomicInteger(0) }
+            if (audioCount.get() >= 2) {
+                result.success(true)
+                return
+            }
+            audioCount.incrementAndGet()
+        }
+
+        result.success(true)
+
+        writeExecutor.execute {
+            try {
+                if (sock.isConnected) {
+                    sock.getOutputStream().write(bytes)
+                    sock.getOutputStream().flush()
+                }
+            } catch (e: Exception) {
+                pendingAudioFrames.remove(id)
+                connections.remove(id)
+                try { sock.close() } catch (_: Exception) {}
+                emit(mapOf("event" to "closed", "id" to id))
+            } finally {
+                if (isAudio) {
+                    pendingAudioFrames[id]?.decrementAndGet()
+                }
+            }
         }
     }
 

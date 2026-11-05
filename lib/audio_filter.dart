@@ -13,8 +13,8 @@ class AudioFilter {
   AudioFilter({
     double sampleRate = 16000,
     double cutoffFreq = 180,
-    int thresholdRms = 220,
-    int hangoverFrames = 5,
+    int thresholdRms = 130,
+    int hangoverFrames = 10,
   })  : _highPass = HighPassFilter(sampleRate: sampleRate, cutoffFreq: cutoffFreq),
         _noiseGate = NoiseGate(thresholdRms: thresholdRms, hangoverFrames: hangoverFrames);
 
@@ -64,7 +64,7 @@ class NoiseGate {
   final int hangoverFrames;
   int _hangoverCount = 0;
 
-  NoiseGate({this.thresholdRms = 220, this.hangoverFrames = 5});
+  NoiseGate({this.thresholdRms = 130, this.hangoverFrames = 10});
 
   /// Calculates RMS energy. If below threshold and hangover expired, silences frame.
   /// Returns true if frame contains active speech.
@@ -85,8 +85,9 @@ class NoiseGate {
 
     if (_hangoverCount > 0) {
       _hangoverCount--;
-      // Smoothly scale down during hangover
-      final gain = (_hangoverCount + 1) / (hangoverFrames + 1);
+      // Smoothly scale down during hangover using half-cosine window to eliminate pops
+      final progress = (_hangoverCount + 1) / (hangoverFrames + 1);
+      final gain = 0.5 * (1.0 - cos(pi * progress));
       for (int i = 0; i < samples.length; i++) {
         samples[i] = (samples[i] * gain).round();
       }

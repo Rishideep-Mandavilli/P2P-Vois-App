@@ -17,6 +17,8 @@ class AudioEngine {
   final List<int> _pending = [];
   final List<Uint8List> _jitter = [];
   bool _playing = false;
+  Timer? _playbackTimer;
+  static final Uint8List _silenceBlock = Uint8List(kFrameSamples * 2);
 
   Future<void> requestPermissions() async {
     final results = await [
@@ -87,21 +89,39 @@ class AudioEngine {
       codec: Codec.pcm16,
       numChannels: 1,
       sampleRate: kSampleRate,
-      bufferSize: kFrameSamples * 4,
+      bufferSize: 4096,
       interleaved: true,
     );
+    _startPlaybackLoop();
   }
 
-  /// Feed a decoded PCM frame. Holds 2 frames (40ms) before playback to
-  /// smooth RFCOMM arrival jitter, then plays one frame per arrival.
+  void _startPlaybackLoop() {
+    _playbackTimer?.cancel();
+    _playbackTimer = Timer.periodic(const Duration(milliseconds: 20), (_) {
+      if (!_playing) return;
+      if (_jitter.isNotEmpty) {
+        _player?.uint8ListSink?.add(_jitter.removeAt(0));
+      } else {
+        _player?.uint8ListSink?.add(_silenceBlock);
+      }
+    });
+  }
+
+  /// Feed a decoded PCM frame into the jitter buffer.
+  /// Holds up to 3 frames (60ms) to absorb RFCOMM arrival jitter.
+  /// Drops older frames if queue exceeds 3 to strictly guarantee real-time latency (<60ms).
   void play(Uint8List pcmBytes) {
     _jitter.add(pcmBytes);
-    if (_jitter.length >= 2) {
-      _player?.uint8ListSink?.add(_jitter.removeAt(0));
+    while (_jitter.length > 3) {
+      _jitter.removeAt(0);
     }
   }
 
   Future<void> dispose() async {
+    _playing = false;
+    _playbackTimer?.cancel();
+    _playbackTimer = null;
+    _jitter.clear();
     await _recorder?.stopRecorder();
     await _player?.stopPlayer();
     await _recorder?.closeRecorder();
